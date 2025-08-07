@@ -1,0 +1,530 @@
+cubes:
+  - name: base_monthly_recurring_revenue
+    description: A monthly snapshot of accounts and their recurring revenue. Our source of truth for MRR, NDR, and GDR calculations. Updated daily.
+    sql_table: REPORTING.REVENUE.RECURRING_REVENUE
+    public: true
+    
+    joins:
+      - name: base_accounts
+        relationship: many_to_one
+        sql: "{base_monthly_recurring_revenue.account_code} = {base_accounts.account_code}"
+    
+    dimensions:
+      - name: id
+        sql: "{monthly_recurring_revenue.account_code} || '-' || {monthly_recurring_revenue.month_dt}"
+        type: string
+        primary_key: true
+
+      - name: account_code
+        sql: account_code
+        type: string
+      
+      - name: mrr_net_change_category
+        sql: event_name
+        type: string
+        
+      - name: mrr_net_change_size
+        sql: EVENT_SIZE
+        type: number
+
+      - name: mrr_net_change_source
+        sql: mrr_change_source
+        type: string
+
+      - name: mrr_net_change_revenue_effect_type
+        sql: "case when {mrr_net_change_category} = 'contraction' OR {mrr_net_change_category} = 'churn' then 'MRR Losses' when {mrr_net_change_category} = 'expansion' OR {mrr_net_change_category} = 'reactivation' OR {mrr_net_change_category} = 'new account' then 'MRR Gains' else null end"
+        type: string
+
+      - name: revshare_mrr_avg
+        sql: REVSHARE_MRR_AVG
+        type: number
+        description: The portion of MRR attributed to RevShare.
+        
+      - name: overage_mrr_avg
+        sql: OVERAGE_MRR_AVG
+        type: number
+        description: The portion of MRR attributed to overages.
+
+      - name: overage_mrr_actual
+        sql: OVERAGE_MRR_ACTUAL
+        type: number
+        description: Actual overage revenue.
+
+      - name: mrr
+        sql: organization_mrr_by_day
+        description: Account MRR for the month, excluding revshare mrr.
+        type: number
+        
+      - name: mrr_version_list
+        sql: mrr_version_list
+        type: string
+        
+      - name: product_revenue_category_list
+        sql: product_revenue_category_list
+        type: string
+        
+      - name: product_code_list
+        sql: product_code_list
+        type: string
+        
+      - name: invoice_number_list
+        sql: invoice_number_list
+        type: string
+        
+      - name: csm_name_end_of_month
+        sql: csm_name_snapshot
+        type: string
+        
+      - name: am_name_end_of_month
+        sql: am_name_snapshot
+        type: string
+        
+      - name: plan_name_end_of_month
+        sql: plan_name_snapshot
+        type: string
+        
+      - name: plan_type
+        sql: plan_type
+        type: string
+        
+      - name: month_dt
+        sql: "DATE_TRUNC('MONTH',date)"
+        type: time
+
+      - name: previous_month_mrr
+        sql: "coalesce({mrr} - {mrr_net_change_size},NULL)"
+        type: number
+
+      - name: net_mrr_change_source
+        sql: mrr_change_source
+        type: string
+
+    measures:
+      - name: count
+        type: count
+        
+      - name: last_updated_dt
+        type: max
+        sql: date
+        description: "Date of last update"
+        
+      - name: total_mrr
+        sql: "{mrr}"
+        type: sum
+        description: The sum of monthly recurring revenue for paid accounts at the end of the period.
+        format: currency
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: mom_mrr_delta        
+        sql: "SUM({mrr}) - SUM({previous_month_mrr})"
+        type: number
+        title: Net New MRR
+        description: The change in MRR from the previous month.
+        meta:
+          Data Owner: Niki Jafari
+          Business Owner: Hannah Burak
+          Anchor Dates: month_dt
+
+      - name: mom_mrr_pct_change        
+        type: number
+        format: percent
+        sql: "({mom_mrr_delta}) / (SUM(NULLIF({previous_month_mrr},0)))*100"
+        title: Month Over Month MRR Growth Rate
+        description: The change in MRR from the previous month as a percentage of the previous month's MRR.
+        meta:
+          Data Owner: Niki Jafari
+          Business Owner: Hannah Burak
+          Anchor Dates: month_dt
+
+      - name: net_new_mrr        
+        type: sum
+        sql: "{mrr_net_change_size}"
+        title: Net New MRR
+        description: The net change in MRR from the previous month.
+        meta:
+          Data Owner: Niki Jafari
+          Business Owner: Hannah Burak
+          Anchor Dates: month_dt
+
+      - name: revshare_mrr
+        sql: "{revshare_mrr_avg}"
+        type: sum
+        description: The sum of MRR attributed to RevShare in the period.
+        format: currency
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: ending_accounts
+        sql: "{account_code}"
+        type: count_distinct
+        filters:
+          - sql: "{mrr} > 0"
+        description: The count of paid accounts at the end of the period.
+        title: Paid Accounts
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+        
+      - name: am_attached_accounts
+        sql: "{account_code}"
+        filters:
+          - sql: "{am_name_end_of_month} IS NOT NULL"
+        type: count_distinct
+        description: The count of accounts who have an assigned AM at the beginning of the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: csm_attached_accounts
+        sql: "{account_code}"
+        filters:
+          - sql: "{csm_name_end_of_month} IS NOT NULL"
+        type: count_distinct
+        description: The count of accounts who have an assigned CSM at the beginning of the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: am_attached_account_rate
+        sql: "({am_attached_accounts} / NULLIF({ending_accounts}, 0))*100"
+        type: number
+        format: percent
+        description: The share of Paid Accounts that are AM-Attached Accounts.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: csm_attached_account_rate
+        sql: "({csm_attached_accounts} / NULLIF({ending_accounts}, 0))*100"
+        type: number
+        format: percent
+        description: The share of Paid Accounts that are CSM-Attached accounts.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: reactivated_accounts
+        sql: "{account_code}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'reactivation'"
+        type: count_distinct
+        description: The count of accounts which have previously churned and incurred MRR for the first time since that churn in the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: reactivated_mrr
+        sql: "{mrr_net_change_size}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'reactivation'"
+        type: sum
+        description: The sum of MRR for accounts which have previously churned and incurred MRR for the first time since that churn in the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: new_accounts
+        sql: "{account_code}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'new account'"
+        type: count_distinct
+        description: The count of accounts paying PandaDoc for the first time in the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: new_accounts_mrr
+        sql: "{mrr_net_change_size}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'new account'"
+        type: sum
+        description: The sum of MRR from accounts paying PandaDoc for the first time in the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: expanded_accounts
+        sql: "{account_code}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'expansion'"
+        type: count_distinct
+        description: The count of existing accounts as of the beginning of the period that expanded their subscriptions or purchased additional products during the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: contracted_accounts
+        sql: "{account_code}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'contraction'"
+        type: count_distinct
+        description: The count of accounts who have decreased their MRR contribution without churning (as through downgrades or partial cancellations)in the period relative to the prior period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: expansion_mrr
+        sql: "{mrr_net_change_size}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'expansion'"
+        type: sum
+        description: The sum of MRR from accounts that expanded their subscriptions or purchased additional products during the period
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: churned_accounts
+        sql: "{account_code}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'churn'"
+        type: count_distinct
+        description: The count of accounts whose final subscriptions have lapsed in the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: churned_mrr
+        sql: "{mrr_net_change_size}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'churn'"
+        type: sum
+        description: The sum of MRR lost from accounts who have entirely churned in the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: account_churn_rate
+        sql: "({churned_accounts}/NULLIF({ending_accounts},0))*100"
+        type: number
+        format: percent
+        description: The percent of Paid Accounts that fully churned in the period (Churned Accounts).
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: renewed_mrr
+        sql: "{mrr_net_change_size}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'unchanged'"
+        type: sum
+        description: The sum of MRR across all subscriptions actively or implicitly renewed in the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: renewed_accounts
+        sql: "{account_code}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'unchanged'"
+        type: count_distinct
+        description: The count of accounts across all subscriptions actively or implicitly renewed in the period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: contraction_mrr
+        sql: "{mrr_net_change_size}"
+        filters:
+          - sql: "{mrr_net_change_category} = 'contraction'"
+        type: sum
+        description: The sum of MRR lost from accounts decreasing (without churning) their revenue contribution (as through downgrades or partial cancellations) in the current period relative to the prior period.
+        meta:
+          Data Owner: Ana Lima
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: average_mrr_per_account
+        sql: "({total_mrr}/NULLIF({ending_accounts},0))*100"
+        type: number
+        format: percent
+        description: The ratio of Total MRR to Paid Accounts.
+        Title: Average Revenue Per Account (ARPA)
+        meta:
+          Data Owner: Hannah Burak
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: net_revenue_churn        
+        sql: "{churned_mrr} + {contraction_mrr} - {expansion_mrr}"
+        type: sum
+        description: The amount of Total MRR that has been lost to Churned MRR and Contraction MRR, net of the revenue gained through Expansion MRR in the period.
+        meta:
+            Data Owner: Ana Lima
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+
+      - name: net_revenue_churn_per_account
+        sql: "({net_revenue_churn} / NULLIF({churned_accounts}, 0))*100"
+        type: number
+        description: The ratio of Net Revenue Churn against Churned Accounts.
+        meta:
+            Data Owner: Ana Lima
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+      
+      - name: net_revenue_churn_rate
+        sql: "({net_revenue_churn} / NULLIF({total_mrr}, 0))*100"
+        type: number
+        format: "percent"
+        description: The ratio of Net Revenue Churn to Total MRR.
+        meta:
+            Data Owner: Ana Lima
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+
+      - name: starting_accounts
+        sql: "{account_code}"
+        type: count_distinct
+        filters:
+          - sql: "{previous_month_mrr} > 0"
+        description: The count of paid accounts at the beginning of the period.
+        title: Paid Accounts
+        meta:
+          Data Owner: Hannah Burak
+          Business Owner: Niki Jafari
+          Anchor Dates: month_dt
+
+      - name: net_new_accounts
+        sql: "{ending_accounts} - {starting_accounts}"
+        type: number
+        description: The change in Paid Accounts between the prior period and the current period.
+        title: Net New Accounts
+        meta:
+            Data Owner: Ana Lima
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+
+      - name: dollar_based_net_expansion_rate
+        sql: "({expansion_mrr} / NULLIF({total_mrr}, 0))*100"
+        type: number
+        format: "percent"
+        description: The ratio of Expansion MRR against Total MRR.
+        meta:
+            Data Owner: Ana Lima
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+
+      - name: logo_activity_churn_rate
+        sql: "({churned_accounts}/NULLIF({starting_accounts},0))*100"
+        type: number
+        format: percent
+        description: The percent of Paid Accounts that fully churned in the period (Churned Accounts).
+        title: Logo Activity Churn Rate
+        meta:
+            Data Owner: Hannah Burak
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+      
+      - name: logo_activity_contraction_rate
+        sql: "({contracted_accounts}/NULLIF({starting_accounts},0))*100"
+        type: number
+        format: percent
+        description: The percent of Paid Accounts that contracted in the period (Contracted Accounts).
+        title: Logo Activity Contraction Rate
+        meta:
+            Data Owner: Hannah Burak
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+
+      - name: logo_activity_expansion_rate
+        sql: "({expanded_accounts}/NULLIF({starting_accounts},0))*100"
+        type: number
+        format: percent
+        description: The percent of Paid Accounts that expanded in the period (Expanded Accounts).
+        title: Logo Activity Expansion Rate
+        meta:
+            Data Owner: Hannah Burak
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+
+      - name: logo_activity_reactivation_rate
+        sql: "({reactivated_accounts}/NULLIF({starting_accounts},0))*100"
+        type: number
+        format: percent
+        description: The ratio of Reactivated Accounts joining in the period to Paid Accounts at the beginning of the period.
+        meta:
+            Data Owner: Hannah Burak
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+
+      - name: logo_activity_new_business_rate
+        sql: "({new_accounts}/NULLIF({starting_accounts},0))*100"
+        type: number
+        format: percent
+        description: The ratio of New Accounts joining in the period to Paid Accounts at the beginning of the period.
+        meta:
+            Data Owner: Hannah Burak
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+
+      - name: churn_share_mrr
+        sql: "({churned_mrr}/NULLIF({total_mrr},0))*100"
+        type: number
+        format: percent
+        description: The ratio of churned MRR to Total MRR.
+        meta:
+            Data Owner: Hannah Burak
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+      
+      - name: expansion_share_mrr
+        sql: "({expansion_mrr}/NULLIF({total_mrr},0))*100"
+        type: number
+        format: percent
+        description: The ratio of expanded MRR to Total MRR.
+        meta:
+            Data Owner: Hannah Burak
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+      
+      - name: reactivation_share_mrr
+        sql: "({reactivated_mrr}/NULLIF({total_mrr},0))*100"
+        type: number
+        format: percent
+        description: The ratio of reactivated MRR to Total MRR.
+        meta:
+            Data Owner: Hannah Burak
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+      
+      - name: contraction_share_mrr
+        sql: "({contraction_mrr}/NULLIF({total_mrr},0))*100"
+        type: number
+        format: percent
+        description: The ratio of contracted MRR to Total MRR.
+        meta:
+            Data Owner: Hannah Burak
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
+
+      - name: new_accounts_share_mrr
+        sql: "({new_accounts_mrr}/NULLIF({total_mrr},0))*100"
+        type: number
+        format: percent
+        description: The ratio of new accounts MRR to Total MRR.
+        meta:
+            Data Owner: Hannah Burak
+            Business Owner: Niki Jafari
+            Anchor Dates: month_dt
